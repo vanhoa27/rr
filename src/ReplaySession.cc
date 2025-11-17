@@ -2262,6 +2262,43 @@ void ReplaySession::serialize_checkpoint(
     pcp::CloneCompletionInfo::Builder& writer, CheckpointInfo& cp_info) {
   DEBUG_ASSERT(clone_completion != nullptr);
 
+  // // === LOGGING CODE AT THE START ===
+  // std::cout << "=== SERIALIZING CHECKPOINT ===" << std::endl;
+  // std::cout << "Total address spaces: " << clone_completion->address_spaces.size() << std::endl;
+  //
+  // for (size_t i = 0; i < clone_completion->address_spaces.size(); i++) {
+  //   auto& as = clone_completion->address_spaces[i];
+  //
+  //   // Count mappings
+  //   size_t mapping_count = 0;
+  //   for (const auto& _ : as.clone_leader->vm()->maps()) {
+  //     mapping_count++;
+  //   }
+  //
+  //   std::cout << "  AS[" << i << "]:" << std::endl;
+  //   std::cout << "    Leader tid: " << as.clone_leader->tid << std::endl;
+  //   std::cout << "    Mappings: " << mapping_count << std::endl;
+  //   std::cout << "    Member states: " << as.member_states.size() << std::endl;
+  //   std::cout << "    Captured memory regions: " << as.captured_memory.size() << std::endl;
+  //
+  //   // Optionally log first few mappings in detail
+  //   size_t shown = 0;
+  //   for (const auto& m : as.clone_leader->vm()->maps()) {
+  //     if (shown < 5) {  // Show first 5 mappings
+  //       std::cout << "      [" << shown << "] " 
+  //         << m.map.start() << "-" << m.map.end()
+  //         << " prot:" << m.map.prot()
+  //         << " " << m.map.fsname() << std::endl;
+  //     }
+  //     shown++;
+  //   }
+  //   if (mapping_count > 5) {
+  //     std::cout << "      ... and " << (mapping_count - 5) << " more" << std::endl;
+  //   }
+  // }
+  // std::cout << "=================================" << std::endl;
+  // // === END LOGGING CODE ===
+
   auto addr_space_count = clone_completion->address_spaces.size();
   auto& as_data = clone_completion->address_spaces;
   auto addr_space_builders = writer.initAddressSpaces(addr_space_count);

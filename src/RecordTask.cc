@@ -2006,6 +2006,39 @@ void RecordTask::maybe_reset_syscallbuf() {
 void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
                               AllowSyscallbufReset reset,
                               const Registers* registers) {
+
+  
+  // 1. % 100
+  // 2. serialize checkpoint
+  //  - serialize captured state
+  //  - serialize vm mappings + metadata
+  // 3. trace trimming
+  // 4. continue
+  
+  static int counter = 0;
+  counter++;
+
+  // Get all address spaces
+  if (counter == 200) {
+    std::cout << "Event " << counter++ << std::endl;
+    auto clone_leader_state = capture_state();
+    struct CloneCompletion clone_state;
+
+    session().create_persistent_checkpoint();
+
+    for (auto vm : session().vms()) {
+      std::cout << "  AddressSpace:" << std::endl;
+
+      // Iterate through mappings in this address space
+      for (const auto& m : vm->maps()) {
+        std::cout << "    " << m.map.start() << "-" << m.map.end()
+                  << " prot:" << m.map.prot()
+                  << " " << m.map.fsname() << std::endl;
+      }
+    }
+  }
+
+
   if (flush == FLUSH_SYSCALLBUF) {
     maybe_flush_syscallbuf();
   }

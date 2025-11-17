@@ -6,6 +6,7 @@
 #include <limits.h>
 #include <linux/capability.h>
 #include <linux/futex.h>
+#include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -2831,6 +2832,47 @@ void RecordSession::on_destroy_record_task(RecordTask* t) {
     detached_task_map.erase(t->tid);
   }
   scheduler().on_destroy(t);
+}
+
+void RecordSession::create_persistent_checkpoint() {
+  std::cout << "Creating PCP during Recording" << std::endl;
+  // 1. create a checkpoint directory
+  string cp_dir = "/tmp/checkpoint-test";
+  mkdir(cp_dir.c_str(), 0755);
+
+  for (auto& vm : vm_map) {
+    Task* leader = *vm.second->task_set().begin();
+    for (const auto& m : vm.second->maps()) {
+      if (m.map.prot() != 0) {
+        // Create filename
+        char filename[512];
+        snprintf(filename, sizeof(filename), "%s/%d-%lx-%lx",
+                 cp_dir.c_str(), leader->tid, 
+                 (unsigned long)m.map.start().as_int(),
+                 (unsigned long)m.map.end().as_int());
+
+        // Read memory from task
+        size_t size = m.map.size();
+        vector<uint8_t> data(size);
+        bool ok = true;
+        leader->read_bytes_helper(m.map.start(), size, data.data(), &ok);
+
+        if (ok == false) {
+          std::cout << "Virtual mappings couldn't be fully recorded; skip!" << std::endl;
+          continue;
+        }
+
+
+        // Write to file
+        ScopedFd fd(filename, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd.is_open()) {
+          write(fd, data.data(), data.size());
+          std::cout << "Dumped: " << filename << std::endl;
+        }
+      }
+    }
+  }
+
 }
 
 uint64_t RecordSession::rr_signal_mask() const {
