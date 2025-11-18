@@ -2,6 +2,7 @@
 
 #include "RecordTask.h"
 
+#include <capnp/message.h>
 #include <dirent.h>
 #include <elf.h>
 #include <limits.h>
@@ -11,7 +12,9 @@
 #include <sys/syscall.h>
 
 #include "AutoRemoteSyscalls.h"
+#include "CheckpointInfo.h"
 #include "ContextSwitchEvent.h"
+#include "PersistentCheckpointing.h"
 #include "PreserveFileMonitor.h"
 #include "RecordSession.h"
 #include "WaitManager.h"
@@ -21,7 +24,9 @@
 #include "log.h"
 #include "record_signal.h"
 #include "rr/rr.h"
+#include "rr_pcp.capnp.h"
 #include "util.h"
+#include "log.h"
 
 using namespace std;
 
@@ -2007,43 +2012,12 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
                               AllowSyscallbufReset reset,
                               const Registers* registers) {
 
-  
-  // 1. % 100
-  // 2. serialize checkpoint
-  //  - serialize captured state
-  //  - serialize vm mappings + metadata
-  // 3. trace trimming
-  // 4. continue
-  
-  static int counter = 0;
-  counter++;
-
-  // Get all address spaces
-  if (counter == 200) {
-    std::cout << "Event " << counter++ << std::endl;
-    auto clone_leader_state = capture_state();
-    struct CloneCompletion clone_state;
-
-    session().create_persistent_checkpoint();
-
-    for (auto vm : session().vms()) {
-      std::cout << "  AddressSpace:" << std::endl;
-
-      // Iterate through mappings in this address space
-      for (const auto& m : vm->maps()) {
-        std::cout << "    " << m.map.start() << "-" << m.map.end()
-                  << " prot:" << m.map.prot()
-                  << " " << m.map.fsname() << std::endl;
-      }
-    }
-  }
-
+  FrameTime current_time = trace_writer().time();
 
   if (flush == FLUSH_SYSCALLBUF) {
     maybe_flush_syscallbuf();
   }
 
-  FrameTime current_time = trace_writer().time();
   if (should_dump_memory(ev, current_time)) {
     dump_process_memory(this, current_time, "rec");
   }
@@ -2129,6 +2103,26 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     // reach it, we're done.
     maybe_reset_syscallbuf();
   }
+
+    // 1. % 100
+  // 2. serialize checkpoint
+  //  - serialize captured state
+  //  - serialize vm mappings + metadata
+  // 3. trace trimming
+  // 4. continue
+  
+  static int counter = 0;
+  counter++;
+
+  // Get all address spaces
+  // TODO: instead of hardcoded interval, pass this via cli if possible
+  FrameTime new_time = trace_writer().time();
+  if (new_time == 200 && ev.can_checkpoint_at()) {
+    std::cout << "Checkpoint: " << current_time << std::endl;
+    LOG(info) << "Recording Event number " << counter++;
+    session().create_persistent_checkpoint();
+  }
+
 }
 
 bool RecordTask::is_fatal_signal(int sig,

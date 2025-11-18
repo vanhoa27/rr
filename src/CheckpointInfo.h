@@ -70,6 +70,7 @@ public:
                  rr::pcp::CheckpointInfo::Reader reader,
                  const CPUIDRecords& cpuid_recs);
 
+  bool serialize(RecordSession& session);
   bool serialize(ReplaySession& session);
   bool exists_on_disk() const;
   void delete_from_disk();

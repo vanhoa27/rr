@@ -31,6 +31,8 @@
 #include "record_signal.h"
 #include "record_syscall.h"
 #include "seccomp-bpf.h"
+#include "PersistentCheckpointing.h"
+
 
 namespace rr {
 
@@ -2834,45 +2836,163 @@ void RecordSession::on_destroy_record_task(RecordTask* t) {
   scheduler().on_destroy(t);
 }
 
+static bool create_persistent_checkpoint_dir(const string& trace_dir) {
+  string checkpoint_dir = trace_dir;
+  LOG(debug) << "create checkpoint dir " << checkpoint_dir;
+  if (mkdir(checkpoint_dir.c_str(), 0755) == 0) {
+    return true;
+  }
+  return false;
+}
+
+// In AddressSpace.cc or a util file
+static vector<uint8_t> read_auxv_from_proc(Task* t) {
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/%d/auxv", t->tid);
+  
+  ScopedFd fd(path, O_RDONLY);
+  if (!fd.is_open()) {
+    FATAL() << "Failed to open " << path;
+  }
+  
+  vector<uint8_t> auxv;
+  uint8_t buf[4096];
+  while (true) {
+    ssize_t nread = read(fd, buf, sizeof(buf));
+    if (nread < 0) {
+      FATAL() << "Failed to read from " << path;
+    }
+    if (nread == 0) {
+      break;
+    }
+    auxv.insert(auxv.end(), buf, buf + nread);
+  }
+  
+  return auxv;
+}
+
+
 void RecordSession::create_persistent_checkpoint() {
   std::cout << "Creating PCP during Recording" << std::endl;
+
   // 1. create a checkpoint directory
-  string cp_dir = "/tmp/checkpoint-test";
-  mkdir(cp_dir.c_str(), 0755);
+  string trace_dir = trace_writer().dir();
+  FrameTime current_event_time = trace_writer().time();
+  // int current_event_time = 200;
+  string cp_dir = trace_dir + "/checkpoint-" + to_string(current_event_time);
 
-  for (auto& vm : vm_map) {
-    Task* leader = *vm.second->task_set().begin();
-    for (const auto& m : vm.second->maps()) {
-      if (m.map.prot() != 0) {
-        // Create filename
-        char filename[512];
-        snprintf(filename, sizeof(filename), "%s/%d-%lx-%lx",
-                 cp_dir.c_str(), leader->tid, 
-                 (unsigned long)m.map.start().as_int(),
-                 (unsigned long)m.map.end().as_int());
-
-        // Read memory from task
-        size_t size = m.map.size();
-        vector<uint8_t> data(size);
-        bool ok = true;
-        leader->read_bytes_helper(m.map.start(), size, data.data(), &ok);
-
-        if (ok == false) {
-          std::cout << "Virtual mappings couldn't be fully recorded; skip!" << std::endl;
-          continue;
-        }
-
-
-        // Write to file
-        ScopedFd fd(filename, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-        if (fd.is_open()) {
-          write(fd, data.data(), data.size());
-          std::cout << "Dumped: " << filename << std::endl;
-        }
-      }
-    }
+  if (!create_persistent_checkpoint_dir(cp_dir)) {
+    FATAL() << "Couldn't create checkpoint directory!";
   }
 
+  LOG(info) << "Created checkpoint directory";
+
+  capnp::MallocMessageBuilder message;
+  auto checkpoint = message.initRoot<pcp::CheckpointInfo>();
+
+  // temp data for now
+  checkpoint.setId(12345);
+  checkpoint.setNextSerial(1);
+
+    // ADD THIS HERE - Explicit mark data!
+  Task* current = *vm_map.begin()->second->task_set().begin();
+  Task::CapturedState state = current->capture_state();
+
+  auto explicit_mark = checkpoint.initExplicit();
+  explicit_mark.setTime(current_event_time);
+  explicit_mark.setTicks(current->tick_count());
+  explicit_mark.setTicksAtEventStart(current->tick_count());
+  explicit_mark.setStepKey(0);
+  explicit_mark.setSinglestepToNextMarkNoSignal(false);
+  explicit_mark.setArch(to_trace_arch(current->arch()));
+  
+  explicit_mark.initRegs().setRaw(regs_to_raw(state.regs));  // From state
+  explicit_mark.initExtraRegs().setRaw(extra_regs_to_raw(state.extra_regs));  // From state
+  explicit_mark.initReturnAddresses(0);  // Empty for now
+
+  auto clone_writer = checkpoint.initCloneCompletion();
+
+  auto addr_spaces = clone_writer.initAddressSpaces(vm_map.size());
+
+  int idx = 0;
+  for (auto& vm_entry : vm_map) {
+    Task* leader = *vm_entry.second->task_set().begin();
+    std:: cout << "Breakpoint fault address: " << leader->vm()->do_breakpoint_fault_addr().register_value() << std::endl;
+    auto as_builder = addr_spaces[idx++];
+
+    // as_builder.setAuxv(kj::ArrayPtr<const capnp::byte>{
+    //   leader->vm()->saved_auxv().data(), 
+    //   leader->vm()->saved_auxv().size()
+    // });
+
+    // Read auxv from /proc instead of from saved_auxv!
+    vector<uint8_t> auxv = read_auxv_from_proc(leader);
+    as_builder.setAuxv(kj::ArrayPtr<const capnp::byte>{
+      auxv.data(), 
+      auxv.size()
+    });
+    
+
+    as_builder.setArch(to_trace_arch(leader->arch()));
+
+    auto cls = as_builder.initCloneLeaderState();
+    write_capture_state(cls, leader->capture_state());
+
+
+    auto pspace = as_builder.initProcessSpace();
+    pspace.setTaskFirstRunEvent(leader->tg->first_run_event());
+    pspace.setVmFirstRunEvent(leader->vm()->first_run_event());
+    pspace.setExe(str_to_data(leader->vm()->exe_image()));
+    pspace.setOriginalExe(str_to_data(leader->vm()->exe_image()));
+
+    // existing does the heavylifting
+    write_vm(leader, pspace, cp_dir);
+
+    auto& tasks = vm_entry.second->task_set();
+    vector<Task*> members;
+    for (Task* t : tasks) {
+      if (t != leader) members.push_back(t);
+    }
+
+    auto member_states = as_builder.initMemberState(members.size());
+    for (size_t i = 0; i < members.size(); i++) {
+        auto ms = member_states[i];
+        write_capture_state(ms, members[i]->capture_state());
+    }
+
+    leader->fd_table()->serialize(pspace);
+
+    // auto captured_mem_list =
+      as_builder.initCapturedMemory(vm_map.size());
+    // auto captured_idx = 0;
+  }
+
+  // ESSENTIAL: syscall buffering flag
+  Task* any_task = *vm_map.begin()->second->task_set().begin();
+  clone_writer.setUsesSyscallBuffering(any_task->vm()->syscallbuf_enabled());
+  
+  // SKIP: These can be zero/empty for prototype
+  clone_writer.setSessionCurrentStep(capnp::Data::Reader{});
+  clone_writer.setLastSigInfo(capnp::Data::Reader{});
+
+  // set last continue task
+  // auto tuid = checkpoint.initLastContinueTask();
+  // tuid.setGroupId(last_continue_task.tguid.tid());
+  // tuid.setGroupSerial(last_continue_task.tguid.serial());
+  // tuid.setTaskId(last_continue_task.tuid.tid());
+
+  // add statistics
+  auto statsWriter = checkpoint.initStatistics();
+  statsWriter.setBytesWritten(statistics().bytes_written);
+  statsWriter.setSyscallsPerformed(statistics().syscalls_performed);
+  statsWriter.setTicksProcessed(statistics().ticks_processed);
+  
+  // 5. Write metadata file
+  string metadata_path = cp_dir + "/metadata";
+  ScopedFd fd(metadata_path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+  capnp::writePackedMessageToFd(fd, message);
+  
+  std::cout << "Checkpoint created!" << std::endl;
 }
 
 uint64_t RecordSession::rr_signal_mask() const {

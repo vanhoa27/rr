@@ -1,5 +1,6 @@
 #include "CheckpointInfo.h"
 #include "GdbServerConnection.h"
+#include "RecordSession.h"
 #include "ReplayTimeline.h"
 #include "ScopedFd.h"
 #include "rr_pcp.capnp.h"
@@ -160,6 +161,7 @@ bool CheckpointInfo::serialize(ReplaySession& session) {
   capnp::writePackedMessageToFd(fd, message);
   return true;
 }
+
 
 bool CheckpointInfo::exists_on_disk() const {
   struct stat buf;
