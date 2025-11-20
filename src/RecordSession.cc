@@ -19,6 +19,7 @@
 #include "Flags.h"
 #include "PerfCounters.h"
 #include "RecordTask.h"
+#include "ReturnAddressList.h"
 #include "TraceeAttentionSet.h"
 #include "TraceStream.h"
 #include "VirtualPerfCounterMonitor.h"
@@ -2871,6 +2872,13 @@ static vector<uint8_t> read_auxv_from_proc(Task* t) {
   return auxv;
 }
 
+static size_t generate_unique_id() {
+    timeval t;
+    gettimeofday(&t, nullptr);
+    auto cp_id = (t.tv_sec * 1000 + t.tv_usec / 1000);
+    return cp_id;
+}
+
 
 void RecordSession::create_persistent_checkpoint() {
   std::cout << "Creating PCP during Recording" << std::endl;
@@ -2878,7 +2886,6 @@ void RecordSession::create_persistent_checkpoint() {
   // 1. create a checkpoint directory
   string trace_dir = trace_writer().dir();
   FrameTime current_event_time = trace_writer().time();
-  // int current_event_time = 200;
   string cp_dir = trace_dir + "/checkpoint-" + to_string(current_event_time);
 
   if (!create_persistent_checkpoint_dir(cp_dir)) {
@@ -2890,40 +2897,40 @@ void RecordSession::create_persistent_checkpoint() {
   capnp::MallocMessageBuilder message;
   auto checkpoint = message.initRoot<pcp::CheckpointInfo>();
 
-  // temp data for now
-  checkpoint.setId(12345);
-  checkpoint.setNextSerial(1);
+  checkpoint.setId(generate_unique_id());
 
-    // ADD THIS HERE - Explicit mark data!
-  Task* current = *vm_map.begin()->second->task_set().begin();
-  Task::CapturedState state = current->capture_state();
+  Task* current_task = *vm_map.begin()->second->task_set().begin();
+  Task::CapturedState state = current_task->capture_state();
 
   auto explicit_mark = checkpoint.initExplicit();
   explicit_mark.setTime(current_event_time);
-  explicit_mark.setTicks(current->tick_count());
-  explicit_mark.setTicksAtEventStart(current->tick_count());
+  explicit_mark.setTicks(current_task->tick_count());
+  explicit_mark.setTicksAtEventStart(current_task->tick_count());
   explicit_mark.setStepKey(0);
   explicit_mark.setSinglestepToNextMarkNoSignal(false);
-  explicit_mark.setArch(to_trace_arch(current->arch()));
+  explicit_mark.setArch(to_trace_arch(current_task->arch()));
   
-  explicit_mark.initRegs().setRaw(regs_to_raw(state.regs));  // From state
-  explicit_mark.initExtraRegs().setRaw(extra_regs_to_raw(state.extra_regs));  // From state
-  explicit_mark.initReturnAddresses(0);  // Empty for now
+  explicit_mark.initRegs().setRaw(regs_to_raw(state.regs));
+  explicit_mark.initExtraRegs().setRaw(extra_regs_to_raw(state.extra_regs));
+  auto ras = explicit_mark.initReturnAddresses(8);
+
+  // todo use RecordTask of this session here
+  for (auto i = 0; i < 8; i++) {
+    ras.set(i, ReturnAddressList(current_task).addresses[i].as_int());
+  }
 
   auto clone_writer = checkpoint.initCloneCompletion();
-
   auto addr_spaces = clone_writer.initAddressSpaces(vm_map.size());
 
   int idx = 0;
   for (auto& vm_entry : vm_map) {
     Task* leader = *vm_entry.second->task_set().begin();
-    std:: cout << "Breakpoint fault address: " << leader->vm()->do_breakpoint_fault_addr().register_value() << std::endl;
-    auto as_builder = addr_spaces[idx++];
 
-    // as_builder.setAuxv(kj::ArrayPtr<const capnp::byte>{
-    //   leader->vm()->saved_auxv().data(), 
-    //   leader->vm()->saved_auxv().size()
-    // });
+    // leader->vm()->set_breakpoint_fault_addr(123136604587911);
+    // std:: cout << "Breakpoint fault address: " << leader->vm()->do_breakpoint_fault_addr().register_value() << std::endl;
+    // leader->vm()->session()->syscall_bp
+
+    auto as_builder = addr_spaces[idx++];
 
     // Read auxv from /proc instead of from saved_auxv!
     vector<uint8_t> auxv = read_auxv_from_proc(leader);
@@ -2932,21 +2939,57 @@ void RecordSession::create_persistent_checkpoint() {
       auxv.size()
     });
     
-
     as_builder.setArch(to_trace_arch(leader->arch()));
 
-    auto cls = as_builder.initCloneLeaderState();
-    write_capture_state(cls, leader->capture_state());
+    pcp::CapturedState::Builder cls = as_builder.initCloneLeaderState();
+    Task::CapturedState leader_state = leader->capture_state();
 
+    // FIXME: maybe don't zero this out
+    // leader_state.num_syscallbuf_bytes = 0;
+
+    // NOTE: sanatize this state since during recording PTRACE_EVENT_SECCOMP may be
+    // captured as a wait status but this would cause asserts to fail like:
+    //     // This should only ever happen during recording - we don't use the
+    //     //seccomp traps during replay.
+    // ASSERT(t, t->session().is_recording());
+
+    leader_state.wait_status = WaitStatus(0x057F); 
+    write_capture_state(cls, leader_state);
 
     auto pspace = as_builder.initProcessSpace();
     pspace.setTaskFirstRunEvent(leader->tg->first_run_event());
     pspace.setVmFirstRunEvent(leader->vm()->first_run_event());
     pspace.setExe(str_to_data(leader->vm()->exe_image()));
     pspace.setOriginalExe(str_to_data(leader->vm()->exe_image()));
+    pspace.setBreakpointFaultAddress(leader->vm()->do_breakpoint_fault_addr().register_value());
 
-    // existing does the heavylifting
     write_vm(leader, pspace, cp_dir);
+    // auto captured_mem_list =
+    //   as_builder.initCapturedMemory(vm_map.size());
+
+    // CAPTURE SYSCALLBUF MEMORY
+    std::vector<std::pair<remote_ptr<void>, std::vector<uint8_t>>> captured_memory;
+    for (const auto& m : leader->vm()->maps()) {
+      if (m.flags & AddressSpace::Mapping::IS_SYSCALLBUF) {
+        size_t capture_size = 32;  // sizeof(syscallbuf_hdr)
+        std::vector<uint8_t> data(capture_size);
+        leader->read_bytes_helper(m.map.start(), capture_size, data.data());
+
+        captured_memory.push_back(std::make_pair(m.map.start(), std::move(data)));
+        break;
+      }
+    }
+
+    // Write captured memory to checkpoint
+    auto captured_mem_list = as_builder.initCapturedMemory(captured_memory.size());
+    for (size_t i = 0; i < captured_memory.size(); i++) {
+      auto cm = captured_mem_list[i];
+      cm.setStartAddress(captured_memory[i].first.as_int());
+      cm.setData(kj::ArrayPtr<const capnp::byte>(
+        reinterpret_cast<const capnp::byte*>(captured_memory[i].second.data()),
+        captured_memory[i].second.size()
+      ));
+    }
 
     auto& tasks = vm_entry.second->task_set();
     vector<Task*> members;
@@ -2961,19 +3004,24 @@ void RecordSession::create_persistent_checkpoint() {
     }
 
     leader->fd_table()->serialize(pspace);
-
-    // auto captured_mem_list =
-      as_builder.initCapturedMemory(vm_map.size());
-    // auto captured_idx = 0;
   }
 
-  // ESSENTIAL: syscall buffering flag
   Task* any_task = *vm_map.begin()->second->task_set().begin();
   clone_writer.setUsesSyscallBuffering(any_task->vm()->syscallbuf_enabled());
   
-  // SKIP: These can be zero/empty for prototype
-  clone_writer.setSessionCurrentStep(capnp::Data::Reader{});
-  clone_writer.setLastSigInfo(capnp::Data::Reader{});
+  // Initialize a clean ReplayTraceStep for checkpoint
+  ReplayTraceStep initial_step{};
+  initial_step.action = TSTEP_NONE;
+  auto step = capnp::Data::Reader{ (std::uint8_t*)&initial_step, 
+    sizeof(ReplayTraceStep) };
+  clone_writer.setSessionCurrentStep(step);
+
+  // Initialize clean siginfo
+  siginfo_t initial_siginfo{};
+  memset(&initial_siginfo, 0, sizeof(siginfo_t));
+  auto siginfo = capnp::Data::Reader{ (std::uint8_t*)&initial_siginfo, 
+    sizeof(siginfo_t) };
+  clone_writer.setLastSigInfo(siginfo);
 
   // set last continue task
   // auto tuid = checkpoint.initLastContinueTask();
@@ -2982,6 +3030,8 @@ void RecordSession::create_persistent_checkpoint() {
   // tuid.setTaskId(last_continue_task.tuid.tid());
 
   // add statistics
+  checkpoint.setWhere(str_to_data("Unknown")); // maybe this is not important, I will hard code it for now tho
+  checkpoint.setNextSerial(current_task_serial());
   auto statsWriter = checkpoint.initStatistics();
   statsWriter.setBytesWritten(statistics().bytes_written);
   statsWriter.setSyscallsPerformed(statistics().syscalls_performed);

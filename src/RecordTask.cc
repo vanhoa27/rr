@@ -2089,6 +2089,7 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
   trace_writer().write_frame(this, ev, registers, extra_registers);
   LOG(debug) << "Wrote event " << ev << " for time " << current_time;
 
+
   if (rseq_new_ip != ip()) {
     Registers r = regs();
     r.set_ip(rseq_new_ip);
@@ -2104,22 +2105,12 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     maybe_reset_syscallbuf();
   }
 
-    // 1. % 100
-  // 2. serialize checkpoint
-  //  - serialize captured state
-  //  - serialize vm mappings + metadata
-  // 3. trace trimming
-  // 4. continue
-  
-  static int counter = 0;
-  counter++;
-
   // Get all address spaces
   // TODO: instead of hardcoded interval, pass this via cli if possible
   FrameTime new_time = trace_writer().time();
   if (new_time == 200 && ev.can_checkpoint_at()) {
-    std::cout << "Checkpoint: " << current_time << std::endl;
-    LOG(info) << "Recording Event number " << counter++;
+    std::cout << "Checkpoint: " << new_time << std::endl;
+    LOG(info) << "Recording Event number " << new_time;
     session().create_persistent_checkpoint();
   }
 

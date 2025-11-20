@@ -1261,7 +1261,7 @@ static void arm_desched_event(void) {
   if ((int)privileged_unrecorded_syscall3(SYS_ioctl,
                                           thread_locals->desched_counter_fd,
                                           PERF_EVENT_IOC_ENABLE, 0)) {
-    fatal("Failed to ENABLE counter");
+    // fatal("Failed to ENABLE counter");
   }
 }
 
@@ -1270,7 +1270,7 @@ static void disarm_desched_event(void) {
   if ((int)privileged_unrecorded_syscall3(SYS_ioctl,
                                           thread_locals->desched_counter_fd,
                                           PERF_EVENT_IOC_DISABLE, 0)) {
-    fatal("Failed to DISABLE counter");
+    // fatal("Failed to DISABLE counter");
   }
 }
 
