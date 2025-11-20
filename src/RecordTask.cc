@@ -2089,6 +2089,14 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
   trace_writer().write_frame(this, ev, registers, extra_registers);
   LOG(debug) << "Wrote event " << ev << " for time " << current_time;
 
+    // Get all address spaces
+  // TODO: instead of hardcoded interval, pass this via cli if possible
+  FrameTime new_time = trace_writer().time();
+  if (new_time % 200 == 0 && ev.can_checkpoint_at()) {
+    std::cout << "Checkpoint: " << new_time << std::endl;
+    LOG(info) << "Recording Event number " << new_time;
+    session().create_persistent_checkpoint();
+  }
 
   if (rseq_new_ip != ip()) {
     Registers r = regs();
@@ -2105,14 +2113,6 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     maybe_reset_syscallbuf();
   }
 
-  // Get all address spaces
-  // TODO: instead of hardcoded interval, pass this via cli if possible
-  FrameTime new_time = trace_writer().time();
-  if (new_time == 200 && ev.can_checkpoint_at()) {
-    std::cout << "Checkpoint: " << new_time << std::endl;
-    LOG(info) << "Recording Event number " << new_time;
-    session().create_persistent_checkpoint();
-  }
 
 }
 
