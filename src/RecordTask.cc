@@ -2014,6 +2014,20 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
 
   FrameTime current_time = trace_writer().time();
 
+  // 1. create checkpoint first if interval matches or if even possible
+  // 2. serialize recorded event to disk
+
+    // Get all address spaces
+  // TODO: instead of hardcoded interval, pass this via cli if possible
+  // checkoutpoint actually means that we record one event before the actual
+  // start event
+  FrameTime new_time = current_time + 1;
+  if (new_time == 300 && ev.can_checkpoint_at()) {
+    std::cout << "Checkpoint: " << new_time << "\n";
+    LOG(info) << "Recording Event number " << new_time;
+    session().create_persistent_checkpoint();
+  }
+
   if (flush == FLUSH_SYSCALLBUF) {
     maybe_flush_syscallbuf();
   }
@@ -2088,15 +2102,6 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
 
   trace_writer().write_frame(this, ev, registers, extra_registers);
   LOG(debug) << "Wrote event " << ev << " for time " << current_time;
-
-    // Get all address spaces
-  // TODO: instead of hardcoded interval, pass this via cli if possible
-  FrameTime new_time = trace_writer().time();
-  if (new_time % 200 == 0 && ev.can_checkpoint_at()) {
-    std::cout << "Checkpoint: " << new_time << std::endl;
-    LOG(info) << "Recording Event number " << new_time;
-    session().create_persistent_checkpoint();
-  }
 
   if (rseq_new_ip != ip()) {
     Registers r = regs();

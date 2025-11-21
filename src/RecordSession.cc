@@ -2885,7 +2885,7 @@ void RecordSession::create_persistent_checkpoint() {
 
   // 1. create a checkpoint directory
   string trace_dir = trace_writer().dir();
-  FrameTime current_event_time = trace_writer().time();
+  FrameTime current_event_time = trace_writer().time() + 1;
   string cp_dir = trace_dir + "/checkpoint-" + to_string(current_event_time);
 
   if (!create_persistent_checkpoint_dir(cp_dir)) {
@@ -2963,7 +2963,9 @@ void RecordSession::create_persistent_checkpoint() {
     pspace.setOriginalExe(str_to_data(leader->vm()->exe_image()));
     pspace.setBreakpointFaultAddress(leader->vm()->do_breakpoint_fault_addr().register_value());
 
-    write_vm(leader, pspace, cp_dir);
+    // NOTE: need to load librrpage.so page 5; see rr_page.S
+    bool is_rec = is_recording();
+    write_vm(leader, pspace, cp_dir, is_rec);
     // auto captured_mem_list =
     //   as_builder.initCapturedMemory(vm_map.size());
 

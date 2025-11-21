@@ -2283,7 +2283,9 @@ void ReplaySession::serialize_checkpoint(
     const auto orig_exe = leader->original_exe();
     pspace.setOriginalExe(str_to_data(orig_exe));
 
-    write_vm(as.clone_leader, pspace, cp_info.data_directory());
+    // This is only added for consistency with RecordSession
+    bool is_rec = is_recording();
+    write_vm(as.clone_leader, pspace, cp_info.data_directory(), is_rec);
     auto captured_mem_list =
         addr_space_clone.initCapturedMemory(as.captured_memory.size());
     auto captured_idx = 0;

@@ -20,13 +20,14 @@ using FrameTime = int64_t;
 class WriteVmConfig {
 public:
   WriteVmConfig(Task* clone_leader, const char* data_dir,
-                size_t buffer_size) noexcept;
+                size_t buffer_size, bool is_rec) noexcept;
   ~WriteVmConfig() { ::munmap(buffer.ptr, buffer.size); }
 
   Task* clone_leader;
   ScopedFd proc_mem_fd;
   ScopedFd proc_pagemap_fd;
   const char* cp_data_dir;
+  bool is_rec;
 
   struct {
     uint8_t* ptr;
@@ -46,7 +47,7 @@ void write_capture_state(pcp::CapturedState::Builder& sb,
  * |checkpoint_data_dir|
  */
 void write_vm(Task* clone_leader, rr::pcp::ProcessSpace::Builder builder,
-              const std::string& checkpoint_data_dir);
+              const std::string& checkpoint_data_dir, bool is_rec);
 
 /**
  * Write file |monitor| information to capnproto |builder|

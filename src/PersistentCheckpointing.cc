@@ -56,8 +56,8 @@ static std::string file_name_of(const std::string& path) {
 }
 
 WriteVmConfig::WriteVmConfig(Task* clone_leader, const char* data_dir,
-                             size_t buffer_size) noexcept
-    : clone_leader(clone_leader), cp_data_dir(data_dir) {
+                             size_t buffer_size, bool is_rec) noexcept
+    : clone_leader(clone_leader), cp_data_dir(data_dir), is_rec(is_rec)  {
   const auto procfs_mem = clone_leader->proc_mem_path();
   const auto procfs_pagemap = clone_leader->proc_pagemap_path();
   proc_mem_fd = ScopedFd{ procfs_mem.c_str(), O_RDONLY };
@@ -165,13 +165,52 @@ static void write_map(const WriteVmConfig& cfg,
       FILE_OP_FATAL(file) << "couldn't truncate file to size "
                           << map.map.size();
 
+    // replace librrpage 4 with librrpage 5 when creation PCP during recording
+    // if (cfg.is_rec &&
+    //     map.flags == AddressSpace::Mapping::IS_RR_PAGE &&
+    //     map.map.fsname().find("librrpage.so") != std::string::npos &&
+    //     map.map.file_offset_bytes() == 12288) { // rr page 4
+    //
+    // }
+
     auto bytes_read = 0ull;
-    while (static_cast<size_t>(bytes_read) < map.map.size()) {
-      const auto current_read = cfg.pread(bytes_read, map.map);
-      if (current_read == -1)
-        FILE_OP_FATAL(file) << " couldn't read contents of " << map.map.str();
-      bytes_read = current_read;
+
+    // Special case: During recording, librrpage.so RR_PAGE at offset 12288 
+    // (page 4;record page) needs to be replaced with offset 16384 (page 5;replay page)
+    // see rr_page.S
+    if (cfg.is_rec && 
+        map.flags == AddressSpace::Mapping::IS_RR_PAGE &&
+        map.map.fsname().find("librrpage.so") != std::string::npos &&
+        map.map.file_offset_bytes() == 12288) {  // IMPORTANT: Only record page (librrpage 4)
+      
+      // Read from file at offset 16384 (replay page) instead of process memory
+      ScopedFd librrpage_fd(map.map.fsname().c_str(), O_RDONLY);
+      if (!librrpage_fd.is_open()) {
+        FILE_OP_FATAL(file) << "Couldn't open librrpage.so for reading replay page";
+      }
+      
+      ssize_t read_result = ::pread(librrpage_fd, cfg.buffer.ptr, 
+                                    map.map.size(), 16384);  // Read replay page (librrpage 5)
+      if (read_result != static_cast<ssize_t>(map.map.size())) {
+        FILE_OP_FATAL(file) << "Couldn't read replay page from librrpage.so";
+      }
+      bytes_read = map.map.size();
+      
+    } else {
+      // Normal case: read from process memory
+      while (static_cast<size_t>(bytes_read) < map.map.size()) {
+        const auto current_read = cfg.pread(bytes_read, map.map);
+        if (current_read == -1)
+          FILE_OP_FATAL(file) << " couldn't read contents of " << map.map.str();
+        bytes_read = current_read;
+      }
     }
+    // while (static_cast<size_t>(bytes_read) < map.map.size()) {
+    //   const auto current_read = cfg.pread(bytes_read, map.map);
+    //   if (current_read == -1)
+    //     FILE_OP_FATAL(file) << " couldn't read contents of " << map.map.str();
+    //   bytes_read = current_read;
+    // }
 
     ASSERT(cfg.clone_leader,
            static_cast<unsigned long>(bytes_read) == map.map.size())
@@ -210,8 +249,10 @@ static void write_map(const WriteVmConfig& cfg,
   }
 }
 
+// NOTE: I added is_recording flag to treat the case of librrpage.so for PCP
+// creation during recording
 void write_vm(Task* clone_leader, rr::pcp::ProcessSpace::Builder builder,
-              const std::string& checkpoint_data_dir) {
+              const std::string& checkpoint_data_dir, bool is_rec) {
   LOG(debug) << "writing VM for " << clone_leader->rec_tid << " to "
              << checkpoint_data_dir;
   if (::mkdir(checkpoint_data_dir.c_str(), 0700) != 0) {
@@ -240,7 +281,7 @@ void write_vm(Task* clone_leader, rr::pcp::ProcessSpace::Builder builder,
   ASSERT(clone_leader, !mappings.empty()) << "No mappings found to serialize";
   copy_buffer_size = ceil_page_size(copy_buffer_size);
   WriteVmConfig cfg{ clone_leader, checkpoint_data_dir.c_str(),
-                     copy_buffer_size };
+                     copy_buffer_size, is_rec};
 
   auto kernel_mappings = builder.initVirtualAddressSpace(mappings.size() + 1);
   builder.setBreakpointFaultAddress(
