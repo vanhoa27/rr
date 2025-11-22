@@ -2881,7 +2881,7 @@ static size_t generate_unique_id() {
 
 
 void RecordSession::create_persistent_checkpoint() {
-  std::cout << "Creating PCP during Recording" << std::endl;
+  LOG(debug) << "Creating PCP during Recording";
 
   // 1. create a checkpoint directory
   string trace_dir = trace_writer().dir();
@@ -2952,7 +2952,6 @@ void RecordSession::create_persistent_checkpoint() {
     //     // This should only ever happen during recording - we don't use the
     //     //seccomp traps during replay.
     // ASSERT(t, t->session().is_recording());
-
     leader_state.wait_status = WaitStatus(0x057F); 
     write_capture_state(cls, leader_state);
 
@@ -3044,7 +3043,7 @@ void RecordSession::create_persistent_checkpoint() {
   ScopedFd fd(metadata_path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
   capnp::writePackedMessageToFd(fd, message);
   
-  std::cout << "Checkpoint created!" << std::endl;
+  LOG(debug) << "Checkpoint created!";
 }
 
 uint64_t RecordSession::rr_signal_mask() const {

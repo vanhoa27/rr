@@ -2018,6 +2018,19 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     maybe_flush_syscallbuf();
   }
 
+  // 1. create checkpoint first if interval matches or if even possible
+  // 2. serialize recorded event to disk
+
+  // Get all address spaces
+  // TODO: instead of hardcoded interval, pass this via cli if possible
+  // checkoutpoint actually means that we record one event before the actual
+  // start event
+  FrameTime new_time = current_time + 1;
+  if (new_time % 20 == 0 /*&& ev.can_checkpoint_at() && is_stopped()*/) {
+    LOG(info) << "Recording Event number " << new_time;
+    session().create_persistent_checkpoint();
+  }
+
   if (should_dump_memory(ev, current_time)) {
     dump_process_memory(this, current_time, "rec");
   }
@@ -2102,21 +2115,6 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     // This only works if the event has a reliable tick count so when we
     // reach it, we're done.
     maybe_reset_syscallbuf();
-    return;
-  }
-
-    // 1. create checkpoint first if interval matches or if even possible
-  // 2. serialize recorded event to disk
-
-  // Get all address spaces
-  // TODO: instead of hardcoded interval, pass this via cli if possible
-  // checkoutpoint actually means that we record one event before the actual
-  // start event
-  FrameTime new_time = current_time - 1;
-  if (new_time == 1000 && ev.can_checkpoint_at()) {
-    std::cout << "Checkpoint: " << new_time << "\n";
-    LOG(info) << "Recording Event number " << new_time;
-    session().create_persistent_checkpoint();
   }
 
 }
