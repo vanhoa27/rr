@@ -165,39 +165,40 @@ static void write_map(const WriteVmConfig& cfg,
       FILE_OP_FATAL(file) << "couldn't truncate file to size "
                           << map.map.size();
 
-    // replace librrpage 4 with librrpage 5 when creation PCP during recording
-    // if (cfg.is_rec &&
-    //     map.flags == AddressSpace::Mapping::IS_RR_PAGE &&
-    //     map.map.fsname().find("librrpage.so") != std::string::npos &&
-    //     map.map.file_offset_bytes() == 12288) { // rr page 4
-    //
-    // }
-
     auto bytes_read = 0ull;
+    constexpr off_t rr_rec_page4 = 12288;
+    constexpr off_t rr_replay_page5 = 16384;
+    bool read_from_file = false;
+    off_t file_offset = map.map.file_offset_bytes();
 
-    // Special case: During recording, librrpage.so RR_PAGE at offset 12288 
-    // (page 4;record page) needs to be replaced with offset 16384 (page 5;replay page)
-    // see rr_page.S
-    if (cfg.is_rec && 
+    if (cfg.is_rec &&
         map.flags == AddressSpace::Mapping::IS_RR_PAGE &&
-        map.map.fsname().find("librrpage.so") != std::string::npos &&
-        map.map.file_offset_bytes() == 12288) {  // IMPORTANT: Only record page (librrpage 4)
-      
-      // Read from file at offset 16384 (replay page) instead of process memory
-      ScopedFd librrpage_fd(map.map.fsname().c_str(), O_RDONLY);
-      if (!librrpage_fd.is_open()) {
-        FILE_OP_FATAL(file) << "Couldn't open librrpage.so for reading replay page";
+        map.map.file_offset_bytes() == rr_rec_page4) {
+
+      read_from_file = true;
+      file_offset = rr_replay_page5;
+
+    } else if (cfg.is_rec &&
+               map.map.is_real_device() &&
+               !(map.map.prot() & PROT_WRITE)
+    ) {
+      read_from_file = true;
+    }
+
+    if (read_from_file) {
+      ScopedFd file_fd(map.map.fsname().c_str(), O_RDONLY);
+
+      ssize_t read_result = ::pread(file_fd, cfg.buffer.ptr, 
+                                    map.map.size(), file_offset);
+      // Zero-fill the rest (BSS section)
+      if (read_result < static_cast<ssize_t>(map.map.size())) {
+        memset(cfg.buffer.ptr + read_result, 0, map.map.size() - read_result);
       }
-      
-      ssize_t read_result = ::pread(librrpage_fd, cfg.buffer.ptr, 
-                                    map.map.size(), 16384);  // Read replay page (librrpage 5)
-      if (read_result != static_cast<ssize_t>(map.map.size())) {
-        FILE_OP_FATAL(file) << "Couldn't read replay page from librrpage.so";
-      }
+
       bytes_read = map.map.size();
       
     } else {
-      // Normal case: read from process memory
+      // normal read from proc memory 
       while (static_cast<size_t>(bytes_read) < map.map.size()) {
         const auto current_read = cfg.pread(bytes_read, map.map);
         if (current_read == -1)
@@ -205,12 +206,6 @@ static void write_map(const WriteVmConfig& cfg,
         bytes_read = current_read;
       }
     }
-    // while (static_cast<size_t>(bytes_read) < map.map.size()) {
-    //   const auto current_read = cfg.pread(bytes_read, map.map);
-    //   if (current_read == -1)
-    //     FILE_OP_FATAL(file) << " couldn't read contents of " << map.map.str();
-    //   bytes_read = current_read;
-    // }
 
     ASSERT(cfg.clone_leader,
            static_cast<unsigned long>(bytes_read) == map.map.size())
