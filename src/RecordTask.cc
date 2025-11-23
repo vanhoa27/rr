@@ -2012,25 +2012,11 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
                               AllowSyscallbufReset reset,
                               const Registers* registers) {
 
-  FrameTime current_time = trace_writer().time();
-
   if (flush == FLUSH_SYSCALLBUF) {
     maybe_flush_syscallbuf();
   }
 
-  // 1. create checkpoint first if interval matches or if even possible
-  // 2. serialize recorded event to disk
-
-  // Get all address spaces
-  // TODO: instead of hardcoded interval, pass this via cli if possible
-  // checkoutpoint actually means that we record one event before the actual
-  // start event
-  FrameTime new_time = current_time + 1;
-  if (new_time % 20 == 0 /*&& ev.can_checkpoint_at() && is_stopped()*/) {
-    LOG(info) << "Recording Event number " << new_time;
-    session().create_persistent_checkpoint();
-  }
-
+  FrameTime current_time = trace_writer().time();
   if (should_dump_memory(ev, current_time)) {
     dump_process_memory(this, current_time, "rec");
   }
@@ -2108,6 +2094,20 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     set_regs(r);
   }
 
+  // 1. create checkpoint first if interval matches or if even possible
+  // 2. serialize recorded event to disk
+
+  // Get all address spaces
+  // TODO: instead of hardcoded interval, pass this via cli if possible
+  // checkoutpoint actually means that we record one event before the actual
+  // start event
+  // NOTE: make sure to checkpoint before syscallbuffer resets 
+  FrameTime new_time = trace_writer().time();
+  if (new_time == 1500 && ev.can_checkpoint_at() && is_stopped()) {
+    LOG(info) << "Recording Event number " << new_time;
+    // session().create_persistent_checkpoint(this);
+  }
+
   if (!ev.has_ticks_slop() && reset == ALLOW_RESET_SYSCALLBUF) {
     // After we've output an event, it's safe to reset the syscallbuf (if not
     // explicitly delayed) since we will have exited the syscallbuf code that
@@ -2115,6 +2115,7 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     // This only works if the event has a reliable tick count so when we
     // reach it, we're done.
     maybe_reset_syscallbuf();
+    return;
   }
 
 }

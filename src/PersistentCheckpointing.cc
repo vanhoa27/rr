@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <asm-generic/mman-common.h>
 #include <cstdint>
+#include <linux/mman.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
 #include <tuple>
@@ -180,7 +181,9 @@ static void write_map(const WriteVmConfig& cfg,
 
     } else if (cfg.is_rec &&
                map.map.is_real_device() &&
-               !(map.map.prot() & PROT_WRITE)
+               (map.map.prot() & PROT_READ) &&
+               !(map.map.prot() & PROT_WRITE) &&
+               (map.map.flags() & MAP_PRIVATE) && false
     ) {
       read_from_file = true;
     }

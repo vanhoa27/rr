@@ -2847,7 +2847,7 @@ static bool create_persistent_checkpoint_dir(const string& trace_dir) {
 }
 
 // In AddressSpace.cc or a util file
-static vector<uint8_t> read_auxv_from_proc(Task* t) {
+[[maybe_unused]] static vector<uint8_t> read_auxv_from_proc(Task* t) {
   char path[PATH_MAX];
   snprintf(path, sizeof(path), "/proc/%d/auxv", t->tid);
   
@@ -2872,7 +2872,7 @@ static vector<uint8_t> read_auxv_from_proc(Task* t) {
   return auxv;
 }
 
-static size_t generate_unique_id() {
+[[maybe_unused]] static size_t generate_unique_id() {
     timeval t;
     gettimeofday(&t, nullptr);
     auto cp_id = (t.tv_sec * 1000 + t.tv_usec / 1000);
@@ -2880,17 +2880,18 @@ static size_t generate_unique_id() {
 }
 
 
-void RecordSession::create_persistent_checkpoint() {
+void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
   LOG(debug) << "Creating PCP during Recording";
 
   // 1. create a checkpoint directory
   string trace_dir = trace_writer().dir();
-  FrameTime current_event_time = trace_writer().time() + 1;
+  FrameTime current_event_time = trace_writer().time();
   string cp_dir = trace_dir + "/checkpoint-" + to_string(current_event_time);
 
   if (!create_persistent_checkpoint_dir(cp_dir)) {
     FATAL() << "Couldn't create checkpoint directory!";
   }
+  
 
   LOG(info) << "Created checkpoint directory";
 
@@ -2899,7 +2900,6 @@ void RecordSession::create_persistent_checkpoint() {
 
   checkpoint.setId(generate_unique_id());
 
-  Task* current_task = *vm_map.begin()->second->task_set().begin();
   Task::CapturedState state = current_task->capture_state();
 
   auto explicit_mark = checkpoint.initExplicit();
@@ -2912,6 +2912,7 @@ void RecordSession::create_persistent_checkpoint() {
   
   explicit_mark.initRegs().setRaw(regs_to_raw(state.regs));
   explicit_mark.initExtraRegs().setRaw(extra_regs_to_raw(state.extra_regs));
+
   auto ras = explicit_mark.initReturnAddresses(8);
 
   // todo use RecordTask of this session here
@@ -2922,9 +2923,10 @@ void RecordSession::create_persistent_checkpoint() {
   auto clone_writer = checkpoint.initCloneCompletion();
   auto addr_spaces = clone_writer.initAddressSpaces(vm_map.size());
 
+
   int idx = 0;
   for (auto& vm_entry : vm_map) {
-    Task* leader = *vm_entry.second->task_set().begin();
+    Task* leader = current_task; 
 
     // leader->vm()->set_breakpoint_fault_addr(123136604587911);
     // std:: cout << "Breakpoint fault address: " << leader->vm()->do_breakpoint_fault_addr().register_value() << std::endl;
@@ -2940,10 +2942,11 @@ void RecordSession::create_persistent_checkpoint() {
     });
     
     as_builder.setArch(to_trace_arch(leader->arch()));
+  
 
     pcp::CapturedState::Builder cls = as_builder.initCloneLeaderState();
     Task::CapturedState leader_state = leader->capture_state();
-
+    (void)cls;
     // FIXME: maybe don't zero this out
     // leader_state.num_syscallbuf_bytes = 0;
 
@@ -2956,6 +2959,7 @@ void RecordSession::create_persistent_checkpoint() {
     write_capture_state(cls, leader_state);
 
     auto pspace = as_builder.initProcessSpace();
+
     pspace.setTaskFirstRunEvent(leader->tg->first_run_event());
     pspace.setVmFirstRunEvent(leader->vm()->first_run_event());
     pspace.setExe(str_to_data(leader->vm()->exe_image()));
@@ -2965,6 +2969,8 @@ void RecordSession::create_persistent_checkpoint() {
     // NOTE: need to load librrpage.so page 5; see rr_page.S
     bool is_rec = is_recording();
     write_vm(leader, pspace, cp_dir, is_rec);
+
+
     // auto captured_mem_list =
     //   as_builder.initCapturedMemory(vm_map.size());
 
@@ -2980,6 +2986,7 @@ void RecordSession::create_persistent_checkpoint() {
         break;
       }
     }
+
 
     // Write captured memory to checkpoint
     auto captured_mem_list = as_builder.initCapturedMemory(captured_memory.size());
@@ -2998,16 +3005,18 @@ void RecordSession::create_persistent_checkpoint() {
       if (t != leader) members.push_back(t);
     }
 
-    auto member_states = as_builder.initMemberState(members.size());
-    for (size_t i = 0; i < members.size(); i++) {
-        auto ms = member_states[i];
-        write_capture_state(ms, members[i]->capture_state());
-    }
+    // FIXME: this is pretty sus, aka causes a crash during recording of NES
+    // auto member_states = as_builder.initMemberState(members.size());
+    // for (size_t i = 0; i < members.size(); i++) {
+    //     auto ms = member_states[i];
+    //     write_capture_state(ms, members[i]->capture_state());
+    // }
 
     leader->fd_table()->serialize(pspace);
   }
 
   Task* any_task = *vm_map.begin()->second->task_set().begin();
+  // Task* any_task = current_task; 
   clone_writer.setUsesSyscallBuffering(any_task->vm()->syscallbuf_enabled());
   
   // Initialize a clean ReplayTraceStep for checkpoint
@@ -3025,10 +3034,10 @@ void RecordSession::create_persistent_checkpoint() {
   clone_writer.setLastSigInfo(siginfo);
 
   // set last continue task
-  // auto tuid = checkpoint.initLastContinueTask();
-  // tuid.setGroupId(last_continue_task.tguid.tid());
-  // tuid.setGroupSerial(last_continue_task.tguid.serial());
-  // tuid.setTaskId(last_continue_task.tuid.tid());
+  auto tuid = checkpoint.initLastContinueTask();
+  tuid.setGroupId(extended_task_id(any_task).tguid.tid());
+  tuid.setGroupSerial(extended_task_id(any_task).tguid.serial());
+  tuid.setTaskId(extended_task_id(any_task).tuid.tid());
 
   // add statistics
   checkpoint.setWhere(str_to_data("Unknown")); // maybe this is not important, I will hard code it for now tho
@@ -3044,6 +3053,7 @@ void RecordSession::create_persistent_checkpoint() {
   capnp::writePackedMessageToFd(fd, message);
   
   LOG(debug) << "Checkpoint created!";
+  // #endif
 }
 
 uint64_t RecordSession::rr_signal_mask() const {

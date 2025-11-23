@@ -890,9 +890,9 @@ template <typename Arch> void AddressSpace::at_preload_init_arch(Task* t) {
         << (t->session().as_record()->use_syscall_buffer() ? "en" : "dis")
         << "abled";
 
-    if (params.breakpoint_table_entry_size == -1) {
-      do_breakpoint_fault_addr_ = params.breakpoint_instr_addr.rptr().as_int();
-    }
+    // if (params.breakpoint_table_entry_size == -1) {
+    //   do_breakpoint_fault_addr_ = params.breakpoint_instr_addr.rptr().as_int();
+    // }
 
   } else {
     if (params.breakpoint_table_entry_size == -1) {

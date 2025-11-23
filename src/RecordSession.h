@@ -212,7 +212,7 @@ public:
   void on_destroy_record_task(RecordTask* t);
 
   // NOTE: added by me
-  void create_persistent_checkpoint();
+  void create_persistent_checkpoint(RecordTask* current_task);
 
 private:
   RecordSession(const std::string& exe_path,
