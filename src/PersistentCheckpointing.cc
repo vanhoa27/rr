@@ -26,6 +26,7 @@
 #include "VirtualPerfCounterMonitor.h"
 #include "kernel_abi.h"
 #include "log.h"
+#include "preload/preload_interface.h"
 #include "replay_syscall.h"
 #include "rr_pcp.capnp.h"
 #include "util.h"
@@ -183,7 +184,7 @@ static void write_map(const WriteVmConfig& cfg,
                map.map.is_real_device() &&
                (map.map.prot() & PROT_READ) &&
                !(map.map.prot() & PROT_WRITE) &&
-               (map.map.flags() & MAP_PRIVATE) && false
+               (map.map.flags() & MAP_PRIVATE)
     ) {
       read_from_file = true;
     }
@@ -449,7 +450,7 @@ void write_capture_state(pcp::CapturedState::Builder& sb,
 
   sb.setClonedFileDataOffset(state.cloned_file_data_offset);
   auto tl = kj::ArrayPtr<const capnp::byte>(
-      reinterpret_cast<const capnp::byte*>(state.thread_locals), 104);
+      reinterpret_cast<const capnp::byte*>(state.thread_locals), PRELOAD_THREAD_LOCALS_SIZE);
   sb.setThreadLocals(tl);
   sb.setRecTid(state.rec_tid);
   sb.setOwnNamespaceRecTid(state.own_namespace_rec_tid);

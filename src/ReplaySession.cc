@@ -1,5 +1,6 @@
 /* -*- Mode: C++; tab-width: 8; c-basic-offset: 2; indent-tabs-mode: nil; -*- */
 
+#include "preload/preload_interface.h"
 #define USE_BREAKPOINT_TARGET 1
 
 #include "ReplaySession.h"
@@ -2501,6 +2502,7 @@ void ReplaySession::load_checkpoint(const CheckpointInfo& cp_info) {
         address_space_arch, trace_in.cpuid_records(), as.getCloneLeaderState());
     auto fd_table_key = cloneLeaderCaptureState.fdtable_identity;
     leader->preload_globals = cloneLeaderCaptureState.preload_globals;
+    // memcpy(leader->thread_locals, cloneLeaderCaptureState.thread_locals, PRELOAD_THREAD_LOCALS_SIZE);
     partial_init_addr_spaces.push_back(CloneCompletion::AddressSpaceClone{
         .clone_leader = leader,
         .clone_leader_state = std::move(cloneLeaderCaptureState),

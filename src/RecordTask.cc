@@ -2102,11 +2102,14 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
   // checkoutpoint actually means that we record one event before the actual
   // start event
   // NOTE: make sure to checkpoint before syscallbuffer resets 
-  FrameTime new_time = trace_writer().time();
-  if (new_time == 1500 && ev.can_checkpoint_at() && is_stopped()) {
-    LOG(info) << "Recording Event number " << new_time;
-    // session().create_persistent_checkpoint(this);
-  }
+  // FrameTime new_time = trace_writer().time();
+  // if (new_time == 20 && ev.can_checkpoint_at() && is_stopped()) {
+  //   LOG(info) << "Recording Event number " << new_time;
+  //   session().create_persistent_checkpoint(this);
+  // }
+
+  // trimming
+
 
   if (!ev.has_ticks_slop() && reset == ALLOW_RESET_SYSCALLBUF) {
     // After we've output an event, it's safe to reset the syscallbuf (if not
