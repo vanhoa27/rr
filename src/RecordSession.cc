@@ -2946,7 +2946,6 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
 
     pcp::CapturedState::Builder cls = as_builder.initCloneLeaderState();
     Task::CapturedState leader_state = leader->capture_state();
-    (void)cls;
     // FIXME: maybe don't zero this out
     // leader_state.num_syscallbuf_bytes = 0;
 
@@ -2955,8 +2954,12 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
     //     // This should only ever happen during recording - we don't use the
     //     //seccomp traps during replay.
     // ASSERT(t, t->session().is_recording());
-    leader_state.wait_status = WaitStatus(0x057F); 
+    if (current_task->ptrace_event() == PTRACE_EVENT_SECCOMP) {
+      leader_state.wait_status = WaitStatus(0x057F); 
+    }
+
     write_capture_state(cls, leader_state);
+
 
     auto pspace = as_builder.initProcessSpace();
 
@@ -2970,6 +2973,11 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
     bool is_rec = is_recording();
     write_vm(leader, pspace, cp_dir, is_rec);
 
+    // perhaps use this instead
+    // AddressSpace& as = *current_task->vm();
+    // for (auto it = as.maps().begin(); it != as.maps().end(); ++it) {
+    //   AddressSpace::Mapping m = *it;
+    // }
 
     // auto captured_mem_list =
     //   as_builder.initCapturedMemory(vm_map.size());
@@ -3006,11 +3014,13 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
     }
 
     // FIXME: this is pretty sus, aka causes a crash during recording of NES
-    // auto member_states = as_builder.initMemberState(members.size());
-    // for (size_t i = 0; i < members.size(); i++) {
-    //     auto ms = member_states[i];
-    //     write_capture_state(ms, members[i]->capture_state());
-    // }
+    auto member_states = as_builder.initMemberState(members.size());
+    for (size_t i = 0; i < members.size(); i++) {
+      auto ms = member_states[i];
+      if (members[i]->is_stopped()) {
+        write_capture_state(ms, members[i]->capture_state());
+      }
+    }
 
     leader->fd_table()->serialize(pspace);
   }

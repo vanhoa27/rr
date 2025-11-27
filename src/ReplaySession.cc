@@ -2429,6 +2429,7 @@ void ReplaySession::load_checkpoint(const CheckpointInfo& cp_info) {
         } else if (map.isFile()) {
           auto p = data_to_str(map.getFile().getContentsPath());
           map_region_file(remote, km, p);
+          // restore_map_contents(leader, p, km);
         } else if (map.isSharedAnon()) {
           auto sa = map.getSharedAnon();
           auto emufile = leader->session().emufs().get_or_create(km);

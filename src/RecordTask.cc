@@ -27,6 +27,7 @@
 #include "rr_pcp.capnp.h"
 #include "util.h"
 #include "log.h"
+#include <algorithm>
 
 using namespace std;
 
@@ -2102,13 +2103,21 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
   // checkoutpoint actually means that we record one event before the actual
   // start event
   // NOTE: make sure to checkpoint before syscallbuffer resets 
-  // FrameTime new_time = trace_writer().time();
-  // if (new_time == 20 && ev.can_checkpoint_at() && is_stopped()) {
-  //   LOG(info) << "Recording Event number " << new_time;
-  //   session().create_persistent_checkpoint(this);
-  // }
+  FrameTime new_time = trace_writer().time();
+  if (new_time == 500 && ev.can_checkpoint_at() && is_stopped()) {
+    bool all_stopped = true;
+    for (const auto& [key, task] : session().tasks()) {
+      if (!task->is_stopped()) {
+        all_stopped = false;
+        break;
+      }
+    }
 
-  // trimming
+    if (all_stopped) {
+      LOG(info) << "Recording Event number " << new_time;
+      session().create_persistent_checkpoint(this);
+    }
+  }
 
 
   if (!ev.has_ticks_slop() && reset == ALLOW_RESET_SYSCALLBUF) {

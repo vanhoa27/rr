@@ -170,44 +170,35 @@ static void write_map(const WriteVmConfig& cfg,
     auto bytes_read = 0ull;
     constexpr off_t rr_rec_page4 = 12288;
     constexpr off_t rr_replay_page5 = 16384;
-    bool read_from_file = false;
-    off_t file_offset = map.map.file_offset_bytes();
 
+    // Special case: rr page needs content from different file offset
     if (cfg.is_rec &&
-        map.flags == AddressSpace::Mapping::IS_RR_PAGE &&
-        map.map.file_offset_bytes() == rr_rec_page4) {
+      map.flags == AddressSpace::Mapping::IS_RR_PAGE &&
+      map.map.file_offset_bytes() == rr_rec_page4) {
 
-      read_from_file = true;
-      file_offset = rr_replay_page5;
-
-    } else if (cfg.is_rec &&
-               map.map.is_real_device() &&
-               (map.map.prot() & PROT_READ) &&
-               !(map.map.prot() & PROT_WRITE) &&
-               (map.map.flags() & MAP_PRIVATE)
-    ) {
-      read_from_file = true;
-    }
-
-    if (read_from_file) {
       ScopedFd file_fd(map.map.fsname().c_str(), O_RDONLY);
-
       ssize_t read_result = ::pread(file_fd, cfg.buffer.ptr, 
-                                    map.map.size(), file_offset);
+                                    map.map.size(), rr_replay_page5);
       // Zero-fill the rest (BSS section)
       if (read_result < static_cast<ssize_t>(map.map.size())) {
         memset(cfg.buffer.ptr + read_result, 0, map.map.size() - read_result);
       }
-
       bytes_read = map.map.size();
-      
+
     } else {
-      // normal read from proc memory 
-      while (static_cast<size_t>(bytes_read) < map.map.size()) {
-        const auto current_read = cfg.pread(bytes_read, map.map);
-        if (current_read == -1)
-          FILE_OP_FATAL(file) << " couldn't read contents of " << map.map.str();
-        bytes_read = current_read;
+      // Normal read from tracee memory for all other mappings
+      ssize_t valid_mem_len = cfg.clone_leader->read_bytes_fallible(
+        map.map.start(), map.map.size(), cfg.buffer.ptr);
+
+      if (valid_mem_len < 0) {
+        ASSERT(cfg.clone_leader, valid_mem_len == -1 && errno == EIO);
+        memset(cfg.buffer.ptr, 0, map.map.size());
+        bytes_read = map.map.size();
+      } else if (valid_mem_len < static_cast<ssize_t>(map.map.size())) {
+        memset(cfg.buffer.ptr + valid_mem_len, 0, map.map.size() - valid_mem_len);
+        bytes_read = map.map.size();
+      } else {
+        bytes_read = valid_mem_len;
       }
     }
 
@@ -239,7 +230,7 @@ static void write_map(const WriteVmConfig& cfg,
       shared_anon.setContentsPath(contents_path);
       shared_anon.setIsSysVSegment(isSysVSegment);
     } else {
-      if (map.map.fsname().empty() || map.map.is_stack() || map.map.is_heap()) {
+      if (map.map.fsname().empty() || map.map.is_stack() || map.map.is_heap() || map.map.is_named_anonymous()) {
         map_type.initPrivateAnon().setContentsPath(contents_path);
       } else {
         map_type.initFile().setContentsPath(contents_path);

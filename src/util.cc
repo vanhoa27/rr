@@ -518,10 +518,6 @@ void checksum_process_memory(RecordTask* t, FrameTime global_time) {
       normalize_syscallbuf(t, mem);
     }
 
-    // if (m.flags & AddressSpace::Mapping::IS_THREAD_LOCALS) {
-    //   continue;
-    // }
-
     uint32_t checksum = compute_checksum(mem.data(), mem.size());
     fprintf(checksums_file, "(%x) %s\n", checksum, raw_map_line.c_str());
   }
@@ -589,9 +585,11 @@ void validate_process_memory(ReplayTask* t, FrameTime global_time) {
     uint32_t our_checksum = compute_checksum(mem.data(), mem.size());
 
     if (checksum != our_checksum) {
+      LOG(info) << "checksums differed";
       notify_checksum_error(t, global_time, our_checksum, checksum,
                             m.map.str());
     }
+    // LOG(info) << "checksum is the same";
   }
 
   if (in_replay_flag) {

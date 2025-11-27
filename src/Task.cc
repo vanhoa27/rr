@@ -1512,11 +1512,9 @@ void Task::activate_preload_thread_locals() {
       Task* t = session().find_task(as->thread_locals_tuid());
       if (t) {
         t->fetch_preload_thread_locals();
-        LOG(info) << "Preload thread locals was retrieved";
       }
       memcpy(local_addr, thread_locals, PRELOAD_THREAD_LOCALS_SIZE);
       as->set_thread_locals_tuid(tuid());
-      LOG(info) << "Setting preload threadlocals";
     }
   }
 }
@@ -2899,8 +2897,6 @@ void Task::copy_state(const CapturedState& state) {
   preload_globals = state.preload_globals;
   ASSERT(this, as->thread_locals_tuid() != tuid());
   memcpy(&thread_locals, &state.thread_locals, PRELOAD_THREAD_LOCALS_SIZE);
-  LOG(info) << "Loaded thread_locals into page, first 4 bytes: " 
-    << std::hex << *(uint32_t*)thread_locals;
 
   // The scratch buffer (for now) is merely a private mapping in
   // the remote task.  The CoW copy made by fork()'ing the
