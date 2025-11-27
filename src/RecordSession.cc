@@ -2846,32 +2846,6 @@ static bool create_persistent_checkpoint_dir(const string& trace_dir) {
   return false;
 }
 
-// In AddressSpace.cc or a util file
-[[maybe_unused]] static vector<uint8_t> read_auxv_from_proc(Task* t) {
-  char path[PATH_MAX];
-  snprintf(path, sizeof(path), "/proc/%d/auxv", t->tid);
-  
-  ScopedFd fd(path, O_RDONLY);
-  if (!fd.is_open()) {
-    FATAL() << "Failed to open " << path;
-  }
-  
-  vector<uint8_t> auxv;
-  uint8_t buf[4096];
-  while (true) {
-    ssize_t nread = read(fd, buf, sizeof(buf));
-    if (nread < 0) {
-      FATAL() << "Failed to read from " << path;
-    }
-    if (nread == 0) {
-      break;
-    }
-    auxv.insert(auxv.end(), buf, buf + nread);
-  }
-  
-  return auxv;
-}
-
 [[maybe_unused]] static size_t generate_unique_id() {
     timeval t;
     gettimeofday(&t, nullptr);
@@ -2885,7 +2859,7 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
 
   // 1. create a checkpoint directory
   string trace_dir = trace_writer().dir();
-  FrameTime current_event_time = trace_writer().time();
+  FrameTime current_event_time = trace_writer().time() + 1;
   string cp_dir = trace_dir + "/checkpoint-" + to_string(current_event_time);
 
   if (!create_persistent_checkpoint_dir(cp_dir)) {
@@ -2926,7 +2900,7 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
 
   int idx = 0;
   for (auto& vm_entry : vm_map) {
-    Task* leader = current_task; 
+    Task* leader = *vm_entry.second->task_set().begin();
 
     // leader->vm()->set_breakpoint_fault_addr(123136604587911);
     // std:: cout << "Breakpoint fault address: " << leader->vm()->do_breakpoint_fault_addr().register_value() << std::endl;
@@ -2934,12 +2908,9 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
 
     auto as_builder = addr_spaces[idx++];
 
-    // Read auxv from /proc instead of from saved_auxv!
-    vector<uint8_t> auxv = read_auxv_from_proc(leader);
     as_builder.setAuxv(kj::ArrayPtr<const capnp::byte>{
-      auxv.data(), 
-      auxv.size()
-    });
+      leader->vm()->saved_auxv().data(), leader->vm()->saved_auxv().size() });
+
     
     as_builder.setArch(to_trace_arch(leader->arch()));
   
