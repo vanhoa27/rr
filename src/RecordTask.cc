@@ -2122,6 +2122,31 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
   }
 
 
+  // 1. create checkpoint first if interval matches or if even possible
+  // 2. serialize recorded event to disk
+
+  // Get all address spaces
+  // TODO: instead of hardcoded interval, pass this via cli if possible
+  // checkoutpoint actually means that we record one event before the actual
+  // start event NOTE: make sure to checkpoint before syscallbuffer resets
+  // we will skipp rseq syscall for now they are kinda weird to handle since
+  // they are kernel managed
+  FrameTime new_time = trace_writer().time();
+  if (new_time % 100 == 0 && ev.can_checkpoint_at() && is_stopped() && ev.Syscall().number != 334) {
+    bool all_stopped = true;
+    for (const auto& [key, task] : session().tasks()) {
+      if (!task->is_stopped()) {
+        all_stopped = false;
+        break;
+      }
+    }
+
+    if (all_stopped) {
+      LOG(info) << "Recording Event number " << new_time;
+      session().create_persistent_checkpoint(this);
+    }
+  }
+
 
   if (!ev.has_ticks_slop() && reset == ALLOW_RESET_SYSCALLBUF) {
     // After we've output an event, it's safe to reset the syscallbuf (if not

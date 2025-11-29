@@ -2859,7 +2859,7 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
 
   // 1. create a checkpoint directory
   string trace_dir = trace_writer().dir();
-  FrameTime current_event_time = trace_writer().time() + 1;
+  FrameTime current_event_time = trace_writer().time();
   string cp_dir = trace_dir + "/checkpoint-" + to_string(current_event_time);
 
   if (!create_persistent_checkpoint_dir(cp_dir)) {
@@ -2901,10 +2901,6 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
   int idx = 0;
   for (auto& vm_entry : vm_map) {
     Task* leader = *vm_entry.second->task_set().begin();
-
-    // leader->vm()->set_breakpoint_fault_addr(123136604587911);
-    // std:: cout << "Breakpoint fault address: " << leader->vm()->do_breakpoint_fault_addr().register_value() << std::endl;
-    // leader->vm()->session()->syscall_bp
 
     auto as_builder = addr_spaces[idx++];
 
