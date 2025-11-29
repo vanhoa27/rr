@@ -2859,7 +2859,7 @@ void RecordSession::create_persistent_checkpoint(RecordTask* current_task) {
 
   // 1. create a checkpoint directory
   string trace_dir = trace_writer().dir();
-  FrameTime current_event_time = trace_writer().time();
+  FrameTime current_event_time = trace_writer().time() + 1;
   string cp_dir = trace_dir + "/checkpoint-" + to_string(current_event_time);
 
   if (!create_persistent_checkpoint_dir(cp_dir)) {

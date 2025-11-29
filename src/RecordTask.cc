@@ -2028,21 +2028,21 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
   // checkoutpoint actually means that we record one event before the actual
   // start event
   // NOTE: make sure to checkpoint before syscallbuffer resets 
-  // FrameTime new_time = current_time + 1;
-  // if (new_time % 20 == 0 && ev.can_checkpoint_at() && is_stopped()) {
-  //   bool all_stopped = true;
-  //   for (const auto& [key, task] : session().tasks()) {
-  //     if (!task->is_stopped()) {
-  //       all_stopped = false;
-  //       break;
-  //     }
-  //   }
-  //
-  //   if (all_stopped) {
-  //     LOG(info) << "Recording Event number " << new_time;
-  //     session().create_persistent_checkpoint(this);
-  //   }
-  // }
+  FrameTime new_time = current_time + 1;
+  if (new_time > 500 && ev.can_checkpoint_at() && is_stopped()) {
+    bool all_stopped = true;
+    for (const auto& [key, task] : session().tasks()) {
+      if (!task->stopped_or_unexpected_exit()) {
+        all_stopped = false;
+        break;
+      }
+    }
+
+    if (all_stopped) {
+      LOG(info) << "Recording Event number " << new_time;
+      session().create_persistent_checkpoint(this);
+    }
+  }
 
   if (should_dump_memory(ev, current_time)) {
     dump_process_memory(this, current_time, "rec");
