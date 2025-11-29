@@ -2029,7 +2029,7 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
   // start event
   // NOTE: make sure to checkpoint before syscallbuffer resets 
   FrameTime new_time = current_time + 1;
-  if (new_time % 100 == 0 && ev.can_checkpoint_at() && is_stopped()) {
+  if (new_time % 20 == 0 && ev.can_checkpoint_at() && is_stopped()) {
     bool all_stopped = true;
     for (const auto& [key, task] : session().tasks()) {
       if (!task->is_stopped()) {
