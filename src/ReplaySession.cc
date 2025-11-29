@@ -2137,6 +2137,7 @@ ReplayResult ReplaySession::replay_step(const StepConstraints& constraints) {
       check_ticks_consistency(t, ev);
     }
 
+    t->activate_preload_thread_locals();
     debug_memory(t);
     check_intel_pt_if_enabled(t);
 
