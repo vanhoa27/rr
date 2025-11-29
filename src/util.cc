@@ -531,7 +531,6 @@ void validate_process_memory(ReplayTask* t, FrameTime global_time) {
   if (!checksums_file) {
     FATAL() << "Failed to open checksum file " << filename;
   }
-  t->activate_preload_thread_locals();
 
   remote_ptr<unsigned char> in_replay_flag;
   if (t->session().has_trace_quirk(TraceReader::UsesGlobalsInReplay) && t->preload_globals) {
