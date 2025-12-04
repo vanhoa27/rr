@@ -2,6 +2,7 @@
 
 #include "RecordTask.h"
 
+#include <chrono>
 #include <capnp/message.h>
 #include <dirent.h>
 #include <elf.h>
@@ -2019,17 +2020,14 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
 
   FrameTime current_time = trace_writer().time();
 
-
-  // 1. create checkpoint first if interval matches or if even possible
-  // 2. serialize recorded event to disk
-
-  // Get all address spaces
-  // TODO: instead of hardcoded interval, pass this via cli if possible
-  // checkoutpoint actually means that we record one event before the actual
-  // start event
-  // NOTE: make sure to checkpoint before syscallbuffer resets 
   FrameTime new_time = current_time + 1;
-  if (new_time > 500 && ev.can_checkpoint_at() && is_stopped()) {
+  static bool checkpoint_pending = false;
+
+  if (new_time % 200 == 0) {
+    checkpoint_pending = true;
+  }
+
+  if (checkpoint_pending && ev.can_checkpoint_at() && is_stopped()) {
     bool all_stopped = true;
     for (const auto& [key, task] : session().tasks()) {
       if (!task->stopped_or_unexpected_exit()) {
@@ -2041,8 +2039,10 @@ void RecordTask::record_event(Event ev, FlushSyscallbuf flush,
     if (all_stopped) {
       LOG(info) << "Recording Event number " << new_time;
       session().create_persistent_checkpoint(this);
+      checkpoint_pending = false; 
     }
   }
+
 
   if (should_dump_memory(ev, current_time)) {
     dump_process_memory(this, current_time, "rec");
